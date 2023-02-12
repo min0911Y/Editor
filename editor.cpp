@@ -301,7 +301,7 @@ class Note {
       if (camera->buffer[l[camera->curser_pos_y]
                              .line[l[camera->curser_pos_y].len - 1]
                              .index +
-                         1] != '\n') {
+                         1] != '\n' && l[camera->curser_pos_y].len == 80) {
         camera->curser_pos_x = l[camera->curser_pos_y].len-1;
         camera->index--;
       } else {
