@@ -1,9 +1,37 @@
 /* Editor.cpp : 文本编辑器*/
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <syscall.h>
+
 #define T_DrawBox(x, y, w, h, c) Text_Draw_Box((y), (x), (h) + y, (w) + x, (c))
 #define MAX_LINE 24
+#define PORT 0x3f8  // COM1
+extern "C" void io_out8(int port, int data);
+extern "C" int io_in8(int port);
+int is_transmit_empty() {
+  return io_in8(PORT + 5) & 0x20;
+}
+
+void write_serial(char a) {
+  while (is_transmit_empty() == 0)
+    ;
+
+  io_out8(PORT, a);
+}
+void kprint(char* str) {
+  for (int i = 0; i < strlen(str); i++) {
+    write_serial(str[i]);
+  }
+}
+void printk(char* str, ...) {
+  char buf[1024];
+  va_list ap;
+  va_start(ap, str);
+  vsprintf(buf, str, ap);
+  va_end(ap);
+  kprint(buf);
+}
 struct Camera {
   int y;  // 摄像机高度
   int curser_pos_x, curser_pos_y;
@@ -56,7 +84,7 @@ void insert_str(char* str, int pos, Camera* c) {
     insert_char(c->buffer, pos++, str[i], c);
   }
 }
-void delete_char(char* str, int pos,Camera *c) {
+void delete_char(char* str, int pos, Camera* c) {
   int i;
   int l = c->len;
   if (l == 0) {
@@ -68,14 +96,66 @@ void delete_char(char* str, int pos,Camera *c) {
   str[l - 1] = 0;
   c->len--;
 }
-class parse {
-  Camera* camera;
-  Line l[MAX_LINE];
+int get_index_of_nth_last_line(int n, char* buf, int pos, int len) {
+  int line_count = 0;
+  int i = pos - 1;
+  int start_of_line = -1;
 
+  // 跳过末尾的换行符
+  if (buf[i] == '\n') {
+    i--;
+  }
+
+  // 倒序扫描找到第n个行的起始位置
+  while (i >= 0) {
+    if (buf[i] == '\n') {
+      line_count++;
+
+      // 找到第n个行的起始位置
+      if (line_count == n) {
+        start_of_line = i + 1;
+        break;
+      }
+    }
+
+    // 处理行内超过80个字符的情况
+    if (i > 0 && i - 1 < start_of_line && (i - start_of_line + 1) % 80 == 0 &&
+        buf[i - 1] != '\n') {
+      line_count++;
+      start_of_line = i;
+    }
+    i--;
+  }
+
+  // 如果找到了第n个行的起始位置，返回该行的起始位置；F否则返回buf的起始位置
+  if (start_of_line == -1) {
+    return 0;
+  } else {
+    return start_of_line;
+  }
+}
+int get_index_of_nth_next_line(int n, char* buf, int pos, int len) {
+  int i = 0;
+  int j = 0;
+  for (; pos < len; pos++) {
+    if (i == n) {
+      return pos;
+    }
+    if (buf[pos] == '\n' || j == 80) {
+      i++;
+      j = 0;
+    } else {
+      j++;
+    }
+  }
+}
+class parse {
  public:
   parse(Camera* c) {
     camera = c;
     clean();
+    ny = 0;
+    nidx = 0;
   }
   void Set() {
     // 根据camera的y值
@@ -87,51 +167,57 @@ class parse {
     int len = 0;
     int sl = 0;
     int i;
-    for (i = 0; i < camera->len  && nl < MAX_LINE; i++) {
-      // printf("%c", camera->buffer[i] == '\n' ? 'n' : camera->buffer[i]);
-      if (l == camera->y) {
-        // printf("OK1\n");
-        if (sc == 0) {
-          this->l[nl].start_index = i;
-          if (nl != 0) {
-          }
+    if (ny == camera->y) {
+      // printk("Default\n");
+      i = nidx;
+      l = ny;
+    } else if (ny > camera->y) {
+      // printk(">\n");
+      nidx = get_index_of_nth_last_line(ny - camera->y, camera->buffer, nidx,
+                                        camera->len);
+      i = nidx;
+      l = camera->y;
+      ny = l;
+    } else {
+      i = get_index_of_nth_next_line(camera->y - ny, camera->buffer, nidx,
+                                     camera->len);
+      nidx = i;
+      ny = camera->y;
+    }
+    for (; i < camera->len && nl < MAX_LINE; i++) {
+      // printk("%c", camera->buffer[i] == '\n' ? 'n' : camera->buffer[i]);
+      //  printf("OK1\n");
+      if (sc == 0) {
+        this->l[nl].start_index = i;
+        if (nl != 0) {
         }
-        if (camera->buffer[i] == '\n' || sc == 80) {
-          //  printf("\nN!!(%02x) sc=%d\n", camera->buffer[i], sc);
-          this->l[nl].line_flag = 1;  //在这里设置
-          this->l[nl].len = len;
-          len = 0;
-          sl = 0;
+      }
+      if (camera->buffer[i] == '\n' || sc == 80) {
+        //  printf("\nN!!(%02x) sc=%d\n", camera->buffer[i], sc);
+        this->l[nl].line_flag = 1;  //在这里设置
+        this->l[nl].len = len;
+        len = 0;
+        sl = 0;
+        nl++;
+        f = sc == 80 ? 1 : 0;
+        sc = 0;
+      } else {
+        //   printf("Y,sc=%d\n", sc);
+        this->l[nl].line[sc++].ch = camera->buffer[i];
+        this->l[nl].line[sc - 1].index = i;
+        len++;
+        if (sc == 80) {
+          this->l[nl].len = 80;
+          // what the fuck?
+          //     printf("\nN!!(%02x) sc=%d\n", camera->buffer[i], sc);
           nl++;
           f = sc == 80 ? 1 : 0;
           sc = 0;
-        } else {
-          //   printf("Y,sc=%d\n", sc);
-          this->l[nl].line[sc++].ch = camera->buffer[i];
-          this->l[nl].line[sc - 1].index = i;
-          len++;
-          if (sc == 80) {
-            this->l[nl].len = 80;
-            // what the fuck?
-            //     printf("\nN!!(%02x) sc=%d\n", camera->buffer[i], sc);
-            nl++;
-            f = sc == 80 ? 1 : 0;
-            sc = 0;
-            len = 0;
-          }
-        }
-
-      } else {
-        if (camera->buffer[i] == '\n' || sc == 80) {
-          l++;
-          f = sc == 80 ? 1 : 0;
-          sc = 0;
-
-        } else {
-          sc++;
+          len = 0;
         }
       }
     }
+
     f = sc == 80 ? 1 : 0;
     sc = 0;
     if (sc == 0) {
@@ -142,10 +228,16 @@ class parse {
       len = 0;
       sl = 0;
     }
+    // printk("\n");
   }
   Line* getBuf() { return l; }
 
  private:
+  Camera* camera;
+  Line l[MAX_LINE];
+  unsigned int wtf; // 编译器抽风了，这里不加一个变量，ny就会自动无限置1
+  unsigned int ny;
+  int nidx;
   void clean() {
     for (int i = 0; i < MAX_LINE; i++) {
       l[i].line_flag = 0;
@@ -206,15 +298,15 @@ class render {
       // fg = 0;
     }
     char buf1[81] =
-        "                                                                      "
+        "                                                                    "
+        "  "
         "          ";
     char buf2[5];
     char buf0[80];
     sprintf(buf0, "COL %d LINE %d", camera->index,
             camera->y + camera->curser_pos_y + 1);
-    sprintf(
-        buf2, "%d%%",
-        (int)(((float)camera->index / (float)camera->len) * 100));
+    sprintf(buf2, "%d%%",
+            (int)(((float)camera->index / (float)camera->len) * 100));
     for (int i = 0; i < strlen(buf0); i++) {
       buf1[i] = buf0[i];
     }
@@ -268,7 +360,7 @@ class Note {
   }
   void Delete() {
     /* 判断3“0”情况 */
-    delete_char(camera->buffer, camera->index,camera);
+    delete_char(camera->buffer, camera->index, camera);
   }
   /* 上下左右操作 */
   void up() {
@@ -303,8 +395,9 @@ class Note {
       if (camera->buffer[l[camera->curser_pos_y]
                              .line[l[camera->curser_pos_y].len - 1]
                              .index +
-                         1] != '\n' && l[camera->curser_pos_y].len == 80) {
-        camera->curser_pos_x = l[camera->curser_pos_y].len-1;
+                         1] != '\n' &&
+          l[camera->curser_pos_y].len == 80) {
+        camera->curser_pos_x = l[camera->curser_pos_y].len - 1;
         camera->index--;
       } else {
         camera->curser_pos_x = l[camera->curser_pos_y].len;
