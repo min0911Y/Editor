@@ -39,32 +39,34 @@ void setState(char* msg) {
   T_DrawBox(0, 24, 80, 1, 0x70);
 }
 void insert_char(char* str, int pos, char ch, Camera* c) {
-  if (strlen(str) + 1 > c->array_len) {
+  if (c->len + 1 > c->array_len) {
     str = (char*)realloc(c->buffer, c->array_len + 100);
     c->buffer = str;
     c->array_len += 100;
   }
   int i;
-  for (i = strlen(str); i >= pos; i--) {
+  for (i = c->len; i >= pos; i--) {
     str[i + 1] = str[i];
   }
   str[pos] = ch;
+  c->len++;
 }
 void insert_str(char* str, int pos, Camera* c) {
-  for (int i = 0; i < strlen(str); i++) {
+  for (int i = 0; i < c->len; i++) {
     insert_char(c->buffer, pos++, str[i], c);
   }
 }
-void delete_char(char* str, int pos) {
+void delete_char(char* str, int pos,Camera *c) {
   int i;
-  int l = strlen(str);
+  int l = c->len;
   if (l == 0) {
     return;
   }
-  for (i = pos; i < strlen(str); i++) {
+  for (i = pos; i < c->len; i++) {
     str[i] = str[i + 1];
   }
   str[l - 1] = 0;
+  c->len--;
 }
 class parse {
   Camera* camera;
@@ -85,7 +87,7 @@ class parse {
     int len = 0;
     int sl = 0;
     int i;
-    for (i = 0; i < strlen(camera->buffer) && nl < MAX_LINE; i++) {
+    for (i = 0; i < camera->len  && nl < MAX_LINE; i++) {
       // printf("%c", camera->buffer[i] == '\n' ? 'n' : camera->buffer[i]);
       if (l == camera->y) {
         // printf("OK1\n");
@@ -212,7 +214,7 @@ class render {
             camera->y + camera->curser_pos_y + 1);
     sprintf(
         buf2, "%d%%",
-        (int)(((float)camera->index / (float)strlen(camera->buffer)) * 100));
+        (int)(((float)camera->index / (float)camera->len) * 100));
     for (int i = 0; i < strlen(buf0); i++) {
       buf1[i] = buf0[i];
     }
@@ -246,7 +248,7 @@ class Note {
   int maxLine() {
     int l = 0;
     int sc = 0;
-    for (int i = 0; i < strlen(camera->buffer); i++) {
+    for (int i = 0; i < camera->len; i++) {
       if (camera->buffer[i] == '\n' || sc == 80) {
         l++;
         sc = 0;
@@ -266,7 +268,7 @@ class Note {
   }
   void Delete() {
     /* 判断3“0”情况 */
-    delete_char(camera->buffer, camera->index);
+    delete_char(camera->buffer, camera->index,camera);
   }
   /* 上下左右操作 */
   void up() {
@@ -434,6 +436,7 @@ class Editor {
     mkfile(filename);
 
     free(bf2);
+    c->len = strlen(c->buffer);
     parse* prse = new parse(c);
     prse->Set();
     Note* n = new Note(c, prse);
@@ -514,9 +517,9 @@ int main(int argc, char** argv) {
     print("\n");
     return 0;
   }
-  printf("Powerint DOS Editor v0.1a\n");
-  printf("We can help you writing note(code)s in Powerint DOS\n");
-  printf("Copyright min0911_ 2022 all right reserved\n");
+  printf("Powerint DOS Editor v0.2a\n");
+  printf("We can help you write note(code)s in Powerint DOS\n");
+  printf("Copyright (C) 2023 min0911_\n");
   printf("Build in %s %s\n", __DATE__, __TIME__);
   system("PAUSE");
 
