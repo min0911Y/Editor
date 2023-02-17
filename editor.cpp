@@ -91,12 +91,12 @@ int get_index_of_nth_last_line(int n, char* buf, int pos, int len) {
     int s;
     start_of_line = 0;
     s = start_of_line;
-    for (; start_of_line < pos-1; start_of_line++) {
+    for (; start_of_line < pos - 1; start_of_line++) {
       if (buf[start_of_line] == '\n') {
         break;
       }
     }
-   // printk("r = %d\n", start_of_line - s);
+    // printk("r = %d\n", start_of_line - s);
     if (start_of_line - s > 80) {
       s = start_of_line - (start_of_line - s) % 80;
     }
@@ -104,12 +104,12 @@ int get_index_of_nth_last_line(int n, char* buf, int pos, int len) {
   } else {
     int s;
     s = start_of_line;
-    for (; start_of_line < pos-1; start_of_line++) {
+    for (; start_of_line < pos - 1; start_of_line++) {
       if (buf[start_of_line] == '\n') {
         break;
       }
     }
-   // printk("r = %d\n", start_of_line - s);
+    // printk("r = %d\n", start_of_line - s);
     if (start_of_line - s > 80) {
       s = start_of_line - (start_of_line - s) % 80;
     }
@@ -122,7 +122,7 @@ int get_index_of_nth_next_line(int n, char* buf, int pos, int len) {
   int f_flag = 0;
   for (; pos < len; pos++) {
     if (i == n) {
-      if(f_flag) {
+      if (f_flag) {
         pos--;
       }
       return pos;
@@ -131,7 +131,9 @@ int get_index_of_nth_next_line(int n, char* buf, int pos, int len) {
     if (buf[pos] == '\n' || j == 80) {
       i++;
       j = 0;
-      f_flag = 1;
+      if (j == 80) {
+        f_flag = 1;
+      }
     } else {
       j++;
     }
@@ -168,7 +170,7 @@ class parse {
       l = ny;
     } else if (ny > camera->y) {
       // printk(">\n");
-      //printk("ny = %d cy = %d\n", ny, camera->y);
+      // printk("ny = %d cy = %d\n", ny, camera->y);
       nidx = get_index_of_nth_last_line(ny - camera->y, camera->buffer, nidx,
                                         camera->len);
       i = nidx;
