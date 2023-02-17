@@ -6,32 +6,6 @@
 
 #define T_DrawBox(x, y, w, h, c) Text_Draw_Box((y), (x), (h) + y, (w) + x, (c))
 #define MAX_LINE 24
-#define PORT 0x3f8  // COM1
-extern "C" void io_out8(int port, int data);
-extern "C" int io_in8(int port);
-int is_transmit_empty() {
-  return io_in8(PORT + 5) & 0x20;
-}
-
-void write_serial(char a) {
-  while (is_transmit_empty() == 0)
-    ;
-
-  io_out8(PORT, a);
-}
-void kprint(char* str) {
-  for (int i = 0; i < strlen(str); i++) {
-    write_serial(str[i]);
-  }
-}
-void printk(char* str, ...) {
-  char buf[1024];
-  va_list ap;
-  va_start(ap, str);
-  vsprintf(buf, str, ap);
-  va_end(ap);
-  kprint(buf);
-}
 struct Camera {
   int y;  // 摄像机高度
   int curser_pos_x, curser_pos_y;
@@ -100,50 +74,64 @@ int get_index_of_nth_last_line(int n, char* buf, int pos, int len) {
   int line_count = 0;
   int i = pos - 1;
   int start_of_line = -1;
-
-  // 跳过末尾的换行符
   if (buf[i] == '\n') {
     i--;
   }
-
-  // 倒序扫描找到第n个行的起始位置
   while (i >= 0) {
     if (buf[i] == '\n') {
       line_count++;
-
-      // 找到第n个行的起始位置
       if (line_count == n) {
         start_of_line = i + 1;
         break;
       }
     }
-
-    // 处理行内超过80个字符的情况
-    if (i > 0 && i - 1 < start_of_line && (i - start_of_line + 1) % 80 == 0 &&
-        buf[i - 1] != '\n') {
-      line_count++;
-      start_of_line = i;
-    }
     i--;
   }
-
-  // 如果找到了第n个行的起始位置，返回该行的起始位置；F否则返回buf的起始位置
   if (start_of_line == -1) {
-    return 0;
+    int s;
+    start_of_line = 0;
+    s = start_of_line;
+    for (; start_of_line < pos-1; start_of_line++) {
+      if (buf[start_of_line] == '\n') {
+        break;
+      }
+    }
+   // printk("r = %d\n", start_of_line - s);
+    if (start_of_line - s > 80) {
+      s = start_of_line - (start_of_line - s) % 80;
+    }
+    return s;
   } else {
-    return start_of_line;
+    int s;
+    s = start_of_line;
+    for (; start_of_line < pos-1; start_of_line++) {
+      if (buf[start_of_line] == '\n') {
+        break;
+      }
+    }
+   // printk("r = %d\n", start_of_line - s);
+    if (start_of_line - s > 80) {
+      s = start_of_line - (start_of_line - s) % 80;
+    }
+    return s;
   }
 }
 int get_index_of_nth_next_line(int n, char* buf, int pos, int len) {
   int i = 0;
   int j = 0;
+  int f_flag = 0;
   for (; pos < len; pos++) {
     if (i == n) {
+      if(f_flag) {
+        pos--;
+      }
       return pos;
     }
+    f_flag = 0;
     if (buf[pos] == '\n' || j == 80) {
       i++;
       j = 0;
+      f_flag = 1;
     } else {
       j++;
     }
@@ -156,8 +144,14 @@ class parse {
     clean();
     ny = 0;
     nidx = 0;
+    cf = 1;
   }
+  void SetUse() { cf = 1; }
   void Set() {
+    if (ny == camera->y && cf == 0) {
+      return;
+    }
+    cf = 0;
     // 根据camera的y值
     clean();
     int l = 0;
@@ -167,12 +161,14 @@ class parse {
     int len = 0;
     int sl = 0;
     int i;
+
     if (ny == camera->y) {
       // printk("Default\n");
       i = nidx;
       l = ny;
     } else if (ny > camera->y) {
       // printk(">\n");
+      //printk("ny = %d cy = %d\n", ny, camera->y);
       nidx = get_index_of_nth_last_line(ny - camera->y, camera->buffer, nidx,
                                         camera->len);
       i = nidx;
@@ -235,9 +231,10 @@ class parse {
  private:
   Camera* camera;
   Line l[MAX_LINE];
-  unsigned int wtf; // 编译器抽风了，这里不加一个变量，ny就会自动无限置1
+  unsigned int wtf;  // 编译器抽风了，这里不加一个变量，ny就会自动无限置1
   unsigned int ny;
   int nidx;
+  int cf;
   void clean() {
     for (int i = 0; i < MAX_LINE; i++) {
       l[i].line_flag = 0;
@@ -270,32 +267,7 @@ class render {
       goto_xy(0, i);
       for (int j = 0, l1 = 0; j < 80; j++) {
         printf("%c", l[i].line[j].ch == '\0' ? ' ' : l[i].line[j].ch);
-        // if (!fg) {
-        //   if (l[i].line[j].ch == ' ') {
-        //     buf[l1] = 0;
-        //     l1 = 0;
-        //     if (strcmp(buf, "asm") == 0) {
-        //       T_DrawBox(j - 3, i, 3, 1, 0x03);
-        //     }
-        //   } else {
-        //     buf[l1++] = l[i].line[j].ch;
-        //   }
-
-        //   if (l[i].line[j].ch == '{' || l[i].line[j].ch == '}') {
-        //     T_DrawBox(j, i, 1, 1, 0x02);
-        //   }
-        // } else {
-        //   T_DrawBox(j, i, 1, 1, 0x04);
-        // }
-        // if (l[i].line[j].ch == '\"') {
-        //   T_DrawBox(j, i, 1, 1, 0x04);
-        //   fg = !fg;
-        //   buf[0] = 0;
-        //   l1 = 0;
-        // }
       }
-      // buf[0] = 0;
-      // fg = 0;
     }
     char buf1[81] =
         "                                                                    "
@@ -357,10 +329,12 @@ class Note {
   }
   void Insert(char ch) {
     insert_char(camera->buffer, camera->index, ch, camera);
+    p->SetUse();
   }
   void Delete() {
     /* 判断3“0”情况 */
     delete_char(camera->buffer, camera->index, camera);
+    p->SetUse();
   }
   /* 上下左右操作 */
   void up() {
@@ -380,7 +354,16 @@ class Note {
       } else {
         camera->index = l[0].line[l[0].len - 1].index + 1;
       }
-      camera->curser_pos_x = l[0].len;
+      if (camera->buffer[l[camera->curser_pos_y]
+                             .line[l[camera->curser_pos_y].len - 1]
+                             .index +
+                         1] != '\n' &&
+          l[camera->curser_pos_y].len == 80) {
+        camera->curser_pos_x = l[camera->curser_pos_y].len - 1;
+        camera->index--;
+      } else {
+        camera->curser_pos_x = l[camera->curser_pos_y].len;
+      }
       camera->curser_pos_y = 0;
     } else {
       camera->curser_pos_y--;
@@ -417,13 +400,9 @@ class Note {
       }
     } else {
       if (ml < (camera->y + camera->curser_pos_y) + 1) {
-        // printf("Can not Down1. %d %d
-        // %d\n",ml,camera->y,camera->curser_pos_y);
-        //	  for(;;);
         return 0;
       }
     }
-    //  printf("sure!\n");
     if (camera->curser_pos_y == MAX_LINE - 1) {
       camera->y++;
     }
@@ -435,8 +414,19 @@ class Note {
       } else {
         camera->index = l[MAX_LINE - 1].line[l[MAX_LINE - 1].len - 1].index + 1;
       }
-      camera->curser_pos_x = l[MAX_LINE - 1].len;
+      // camera->curser_pos_x = l[MAX_LINE - 1].len;
+      if (camera->buffer[l[camera->curser_pos_y]
+                             .line[l[camera->curser_pos_y].len - 1]
+                             .index +
+                         1] != '\n' &&
+          l[camera->curser_pos_y].len == 80) {
+        camera->curser_pos_x = l[camera->curser_pos_y].len - 1;
+        camera->index--;
+      } else {
+        camera->curser_pos_x = l[camera->curser_pos_y].len;
+      }
       camera->curser_pos_y = MAX_LINE - 1;
+
     } else {
       camera->curser_pos_y++;
       if (l[camera->curser_pos_y].len == 0) {
@@ -448,7 +438,16 @@ class Note {
                         1;
         //     printf("INDEX=%d\n", camera->index);
       }
-      camera->curser_pos_x = l[camera->curser_pos_y].len;
+      if (camera->buffer[l[camera->curser_pos_y]
+                             .line[l[camera->curser_pos_y].len - 1]
+                             .index +
+                         1] != '\n' &&
+          l[camera->curser_pos_y].len == 80) {
+        camera->curser_pos_x = l[camera->curser_pos_y].len - 1;
+        camera->index--;
+      } else {
+        camera->curser_pos_x = l[camera->curser_pos_y].len;
+      }
     }
     return 1;
   }
@@ -610,7 +609,7 @@ int main(int argc, char** argv) {
     print("\n");
     return 0;
   }
-  printf("Powerint DOS Editor v0.2a\n");
+  printf("Powerint DOS Editor v0.2c\n");
   printf("We can help you write note(code)s in Powerint DOS\n");
   printf("Copyright (C) 2023 min0911_\n");
   printf("Build in %s %s\n", __DATE__, __TIME__);
