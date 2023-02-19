@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <syscall.h>
-
+int mLine(char* buffer, int len);
 #define T_DrawBox(x, y, w, h, c) Text_Draw_Box((y), (x), (h) + y, (w) + x, (c))
 #define MAX_LINE 24
 struct Camera {
@@ -35,10 +35,10 @@ void putSpace(int x, int y, int w, int h) {
   }
 }
 void setState(char* msg) {
-  putSpace(0, 24, 80, 1);
-  goto_xy(0, 24);
+  putSpace(0, MAX_LINE, 80, 1);
+  goto_xy(0, MAX_LINE);
   print(msg);
-  T_DrawBox(0, 24, 80, 1, 0x70);
+  T_DrawBox(0, MAX_LINE, 80, 1, 0x70);
 }
 void insert_char(char* str, int pos, char ch, Camera* c) {
   if (c->len + 1 > c->array_len) {
@@ -338,6 +338,65 @@ class Note {
     delete_char(camera->buffer, camera->index, camera);
     p->SetUse();
   }
+  void To(int line) {
+    p->Set();
+    Line* l = p->getBuf();
+    if (line <= (camera->y) + MAX_LINE && (line > camera->y)) {
+      if (l[line - camera->y - 1].line_flag == 0) {
+        setState("Cannot To");
+        getch();
+        return;
+      }
+      camera->curser_pos_y = line - camera->y - 1;
+      if (l[line - camera->y - 1].len == 0) {
+        camera->index = l[line - camera->y - 1].start_index;
+      } else {
+        camera->index = l[line - camera->y - 1]
+                            .line[l[line - camera->y - 1].len - 1]
+                            .index +
+                        1;
+      }
+      if (camera->buffer[l[line - camera->y - 1]
+                             .line[l[line - camera->y - 1].len - 1]
+                             .index +
+                         1] != '\n' &&
+          l[line - camera->y - 1].len == 80) {
+        camera->curser_pos_x = l[line - camera->y - 1].len - 1;
+        camera->index--;
+      } else {
+        camera->curser_pos_x = l[line - camera->y - 1].len;
+      }
+    } else {
+      if (line > maxLine() + 1) {
+        setState("Cannot To");
+        getch();
+      } else {
+        camera->y = line-1;
+        p->Set();
+        l = p->getBuf();
+        camera->curser_pos_y = line - camera->y - 1;
+        if (l[line - camera->y - 1].len == 0) {
+          camera->index = l[line - camera->y - 1].start_index;
+        } else {
+          camera->index = l[line - camera->y - 1]
+                              .line[l[line - camera->y - 1].len - 1]
+                              .index +
+                          1;
+        }
+        if (camera->buffer[l[line - camera->y - 1]
+                               .line[l[line - camera->y - 1].len - 1]
+                               .index +
+                           1] != '\n' &&
+            l[line - camera->y - 1].len == 80) {
+          camera->curser_pos_x = l[line - camera->y - 1].len - 1;
+          camera->index--;
+        } else {
+          camera->curser_pos_x = l[line - camera->y - 1].len;
+        }
+      }
+    }
+  }
+
   /* 上下左右操作 */
   void up() {
     if (camera->y == 0 && camera->curser_pos_y == 0) {
@@ -560,6 +619,21 @@ class Editor {
         }
       } else if (ch == '\t') {
         return c->buffer;
+      } else if (ch == 0x01) {
+        setState("");
+        goto_xy(0, MAX_LINE);
+        char buf[100];
+        int c = get_cons_color();
+        set_cons_color(0x70);
+        scan(buf,100);
+        set_cons_color(c);
+        r->showAll();
+        if(strncmp("to ",buf,3) == 0) {
+          n->To(strtol(buf+3,nullptr,10));
+        } else {
+          setState("Bad Command!");
+          getch();
+        }
       }
       // else if (ch == 224) {
       // 	if (ch == 77) {
@@ -588,15 +662,11 @@ class Editor {
     }
   }
 };
-int mLine(char* buffer) {
+int mLine(char* buffer, int len) {
   int l = 0;
-  int sc = 0;
-  for (int i = 0; i < strlen(buffer); i++) {
-    if (buffer[i] == '\n' || sc == 80) {
+  for (int i = 0; i < len; i++) {
+    if (buffer[i] == '\n') {
       l++;
-      sc = 0;
-    } else {
-      sc++;
     }
   }
   return l;
@@ -619,9 +689,10 @@ int main(int argc, char** argv) {
 
   Editor* e = new Editor();
   char* c = e->Main(argv[1]);
+  int l = strlen(c);
   system("cls");
-  char* bb = (char*)malloc(strlen(c) + 1 + mLine(c));
-  for (int i = 0, j = 0; i < strlen(c); i++) {
+  char* bb = (char*)malloc(strlen(c) + 1 + mLine(c, l));
+  for (int i = 0, j = 0; i < l; i++) {
     if (c[i] == '\n') {
       bb[j++] = '\r';
       bb[j++] = '\n';
@@ -629,7 +700,7 @@ int main(int argc, char** argv) {
       bb[j++] = c[i];
     }
   }
-  Edit_File(argv[1], bb, strlen(c) + mLine(c), 0);
+  Edit_File(argv[1], bb, strlen(c) + mLine(c, l), 0);
   // char b[50];
   // printf("File:");
   // gets(b);
