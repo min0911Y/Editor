@@ -1,8 +1,11 @@
 /* Editor.cpp : 文本编辑器*/
+#include <mouse.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <syscall.h>
+
+#define VIEW_LINE 0
 int mLine(char* buffer, int len);
 #define T_DrawBox(x, y, w, h, c) Text_Draw_Box((y), (x), (h) + y, (w) + x, (c))
 #define MAX_LINE 24
@@ -13,6 +16,9 @@ struct Camera {
   char* buffer;
   int array_len;
   int len;
+#if VIEW_LINE
+  int ml;
+#endif
 };
 struct Char {
   int index;  // 在buffer中的index
@@ -25,6 +31,7 @@ struct Line {
   int len;
   int start_index;  // 行首索引
 };
+
 void putSpace(int x, int y, int w, int h) {
   goto_xy(x, y);
   for (int i = 0; i < h; i++) {
@@ -165,12 +172,9 @@ class parse {
     int i;
 
     if (ny == camera->y) {
-      // printk("Default\n");
       i = nidx;
       l = ny;
     } else if (ny > camera->y) {
-      // printk(">\n");
-      // printk("ny = %d cy = %d\n", ny, camera->y);
       nidx = get_index_of_nth_last_line(ny - camera->y, camera->buffer, nidx,
                                         camera->len);
       i = nidx;
@@ -183,8 +187,6 @@ class parse {
       ny = camera->y;
     }
     for (; i < camera->len && nl < MAX_LINE; i++) {
-      // printk("%c", camera->buffer[i] == '\n' ? 'n' : camera->buffer[i]);
-      //  printf("OK1\n");
       if (sc == 0) {
         this->l[nl].start_index = i;
         if (nl != 0) {
@@ -205,6 +207,9 @@ class parse {
         this->l[nl].line[sc - 1].index = i;
         len++;
         if (sc == 80) {
+          if (i + 1 < camera->len && camera->buffer[i + 1] == '\n') {
+            i++;
+          }
           this->l[nl].len = 80;
           // what the fuck?
           //     printf("\nN!!(%02x) sc=%d\n", camera->buffer[i], sc);
@@ -253,12 +258,14 @@ class render {
   char* buf;
   parse* p;
   Camera* camera;
+  char* filename;
 
  public:
-  render(char* buffer, Camera* c, parse* _p) {
+  render(char* buffer, Camera* c, parse* _p, char* fm) {
     buf = buffer;
     p = _p;
     camera = c;
+    filename = fm;
   }
   void showAll() {
     Line* l = p->getBuf();
@@ -277,8 +284,15 @@ class render {
         "          ";
     char buf2[5];
     char buf0[80];
-    sprintf(buf0, "COL %d LINE %d", camera->index,
-            camera->y + camera->curser_pos_y + 1);
+#if VIEW_LINE
+
+    sprintf(buf0, "COL %d ROW %d/%d      %s | Text", camera->index,
+            camera->y + camera->curser_pos_y + 1, camera->ml + 1, filename);
+#else
+    sprintf(buf0, "COL %d ROW %d      %s | Text", camera->index,
+            camera->y + camera->curser_pos_y + 1, filename);
+#endif
+
     sprintf(buf2, "%d%%",
             (int)(((float)camera->index / (float)camera->len) * 100));
     for (int i = 0; i < strlen(buf0); i++) {
@@ -330,11 +344,53 @@ class Note {
     p = _p;
   }
   void Insert(char ch) {
+#if VIEW_LINE
+    if (ch == '\n') {
+      camera->ml++;
+    } else {
+      // FIXME: 行数计算错误
+      p->Set();
+      Line* l = p->getBuf();
+      char* s = (char*)(camera->index + (uint32_t)camera->buffer);
+      for (; s > camera->buffer && *s != '\n'; s--)
+        ;
+      if (*s == '\n') {
+        s++;
+      }
+      int a = 0;
+      for (; a < (camera->len + (s - camera->buffer)) && s[a] != '\n'; a++)
+        ;
+      if (a != 0 && a % 80 == 0) {
+        camera->ml++;
+      }
+    }
+#endif
     insert_char(camera->buffer, camera->index, ch, camera);
     p->SetUse();
   }
   void Delete() {
     /* 判断3“0”情况 */
+#if VIEW_LINE
+    if (camera->buffer[camera->index] == '\n') {
+      camera->ml--;
+    } else {
+      p->Set();
+      Line* l = p->getBuf();
+
+      char* s = (char*)(camera->index + (uint32_t)camera->buffer);
+      for (; s > camera->buffer && *s != '\n'; s--)
+        ;
+      if (s != camera->buffer) {
+        s++;
+      }
+      int a = 0;
+      for (; a < camera->len && s[a] != '\n'; a++)
+        ;
+      if (a != 0 && (a - 1) != 0 && (a - 1) % 80 == 0) {
+        camera->ml--;
+      }
+    }
+#endif
     delete_char(camera->buffer, camera->index, camera);
     p->SetUse();
   }
@@ -371,7 +427,7 @@ class Note {
         setState("Cannot To");
         getch();
       } else {
-        camera->y = line-1;
+        camera->y = line - 1;
         p->Set();
         l = p->getBuf();
         camera->curser_pos_y = line - camera->y - 1;
@@ -396,7 +452,32 @@ class Note {
       }
     }
   }
-
+  void Click(int x, int y) {
+    p->Set();
+    Line* l = p->getBuf();  // 获取当前行布局
+    if (l[y].line[0].ch == '\0' && l[y].line_flag == 0) {
+      return;
+    }
+    if (l[y].len < x) {
+      x = l[y].len - 1;
+      if (l[y].len == 0) {
+        camera->index = l[y].start_index;
+        camera->curser_pos_x = 0;
+      } else {
+        camera->index = l[y].line[x].index + 1;
+        camera->curser_pos_x = x + 1;
+      }
+      camera->curser_pos_y = y;
+    } else {
+      if (l[y].len == 0) {
+        camera->index = l[y].start_index;
+      } else {
+        camera->index = l[y].line[x].index;
+      }
+      camera->curser_pos_x = x;
+      camera->curser_pos_y = y;
+    }
+  }
   /* 上下左右操作 */
   void up() {
     if (camera->y == 0 && camera->curser_pos_y == 0) {
@@ -456,7 +537,6 @@ class Note {
     if (camera->curser_pos_y != MAX_LINE - 1) {
       if (l[camera->curser_pos_y + 1].line[0].ch == '\0' &&
           l[camera->curser_pos_y + 1].line_flag == 0) {
-        //	  printf("Can not Down2.\n");
         return 0;
       }
     } else {
@@ -560,16 +640,28 @@ class Note {
     }
   }
 };
+void m_thread(void* s);
+
 class Editor {
  public:
+  parse* prse;
+  Note* n;
+  Camera* c;
+  render* r;
+  void Click(int x, int y) {
+    n->Click(x, y);
+    r->showAll();
+  }
   char* Main(char* filename) {
     system("cls");
-    Camera* c = (Camera*)malloc(sizeof(Camera));
+    c = (Camera*)malloc(sizeof(Camera));
     c->buffer = (char*)malloc(filesize(filename) + 1000);
     char* bf2 = (char*)malloc(filesize(filename) + 1000);
     c->array_len = filesize(filename) + 1000;
     c->len = 0;
-
+#if VIEW_LINE
+    c->ml = 0;
+#endif
     c->y = 0;
     c->curser_pos_x = 0;
     c->curser_pos_y = 0;
@@ -590,12 +682,20 @@ class Editor {
 
     free(bf2);
     c->len = strlen(c->buffer);
-    parse* prse = new parse(c);
+    prse = new parse(c);
     prse->Set();
-    Note* n = new Note(c, prse);
+    n = new Note(c, prse);
     Line* l = prse->getBuf();
     //  printf("%s\n", c->buffer);
-    render* r = new render(c->buffer, c, prse);
+    r = new render(c->buffer, c, prse, filename);
+#if VIEW_LINE
+    c->ml = n->maxLine();
+#endif
+    char* stack = (char*)malloc(16 * 1024);
+    stack += 16 * 1024;
+    unsigned int* s = (unsigned int*)(stack);
+    *s = (unsigned int)this;
+    AddThread("mouse", (unsigned int)&m_thread, (unsigned int)stack - 4);
     r->showAll();
     int times = 0;
     for (;;) {
@@ -625,11 +725,11 @@ class Editor {
         char buf[100];
         int c = get_cons_color();
         set_cons_color(0x70);
-        scan(buf,100);
+        scan(buf, 100);
         set_cons_color(c);
         r->showAll();
-        if(strncmp("to ",buf,3) == 0) {
-          n->To(strtol(buf+3,nullptr,10));
+        if (strncmp("to ", buf, 3) == 0) {
+          n->To(strtol(buf + 3, nullptr, 10));
         } else {
           setState("Bad Command!");
           getch();
@@ -662,6 +762,15 @@ class Editor {
     }
   }
 };
+void m_thread(void* s) {
+  Editor* b = (Editor*)s;
+  for (;;) {
+    int mouse = get_mouse();
+    if (GetMouse_btn(mouse) == CLICK_LEFT) {
+      b->Click(GetMouse_x(mouse), GetMouse_y(mouse));
+    }
+  }
+}
 int mLine(char* buffer, int len) {
   int l = 0;
   for (int i = 0; i < len; i++) {
